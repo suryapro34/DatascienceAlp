@@ -9,11 +9,11 @@ from sklearn.metrics import mean_squared_error, r2_score
 from datetime import datetime
 import os
 
-# Page Configuration
+
 st.set_page_config(page_title="CO2 Emission Predictor", layout="wide")
 st.title("🚗 Vehicle CO2 Emission Predictor (ICE Vehicles)")
 
-# Load Dataset
+
 @st.cache_data
 def load_data():
     if not os.path.exists('EV_vs_ICE_Vehicle_Specs_2015_2026.csv'):
@@ -28,29 +28,31 @@ df = load_data()
 if df is None:
     st.stop()
 
-# Initialize session state
-if 'model' not in st.session_state:
-    st.session_state.model = None
-    st.session_state.y_test = None
-    st.session_state.y_pred = None
-if 'prediction_history' not in st.session_state:
-    st.session_state.prediction_history = []
-if 'training_history' not in st.session_state:
-    st.session_state.training_history = []
+if 'slr_model' not in st.session_state:
+    st.session_state.slr_model = None
+if 'mlr_model' not in st.session_state:
+    st.session_state.mlr_model = None
+if 'slr_training_history' not in st.session_state:
+    st.session_state.slr_training_history = []
+if 'slr_prediction_history' not in st.session_state:
+    st.session_state.slr_prediction_history = []
+if 'mlr_training_history' not in st.session_state:
+    st.session_state.mlr_training_history = []
+if 'mlr_prediction_history' not in st.session_state:
+    st.session_state.mlr_prediction_history = []
 
-# Sidebar: Model Settings
+
 st.sidebar.header("⚙️ Settings")
 test_size = st.sidebar.slider("Test Data Size", 0.1, 0.4, 0.25, 0.05)
 model_type = st.sidebar.radio("Select Model", ["Simple Linear Regression (SLR)", "Multiple Linear Regression (MLR)"])
 train_btn = st.sidebar.button("🚀 Train Model")
 
 st.sidebar.markdown("---")
-st.sidebar.info("💡 **Tips:** Load the dataset → Adjust parameters → Train the model → View predictions in the Prediction tab.")
 
 # Main Layout with Tabs
 tab1, tab2, tab3, tab4 = st.tabs(["📊 Dataset & EDA", "🤖 Training & Evaluation", "🔮 Predict New Values", "🕓 History"])
 
-# ==================== TAB 1: DATASET & EDA ====================
+
 with tab1:
     st.header("📊 Dataset & Exploratory Data Analysis")
     st.dataframe(df.head(), use_container_width=True)
@@ -73,7 +75,7 @@ with tab1:
     st.markdown("---")
     st.markdown("💡 **Insight:** There is an inverse relationship between Combined MPG and CO2 Emissions. The higher the MPG, the lower the CO2 emissions produced.")
 
-# ==================== TAB 2: TRAINING & EVALUATION ====================
+
 with tab2:
     st.header("🤖 Model Training & Evaluation")
 
@@ -111,13 +113,17 @@ with tab2:
         st.metric("R² Score", f"{r2:.4f}")
         st.metric("RMSE (g/mile)", f"{rmse:.4f}")
 
-        # Save to session state
-        st.session_state.model = model
+        
+        if model_type.startswith("Simple"):
+           st.session_state.slr_model = model
+        else:
+           st.session_state.mlr_model = model
+
         st.session_state.y_test = y_test
         st.session_state.y_pred = y_pred
 
-        # Log to training history
-        st.session_state.training_history.append({
+        
+        log_entry = {
             "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "Model": model_type,
             "Test Size": test_size,
@@ -125,9 +131,12 @@ with tab2:
             "RMSE (g/mile)": round(rmse, 4),
             "Intercept": round(model.intercept_, 4),
             "Coefficients": str(coefficients),
-        })
-
-        # Plot Actual vs Predicted
+        }
+        if model_type.startswith("Simple"):
+          st.session_state.slr_training_history.append(log_entry)
+        else:
+          st.session_state.mlr_training_history.append(log_entry)
+          
         fig, ax = plt.subplots(figsize=(6, 5))
         ax.scatter(y_test, y_pred, alpha=0.6, color='darkorange')
         min_val = min(y_test.min(), y_pred.min())
@@ -139,10 +148,10 @@ with tab2:
         ax.legend()
         st.pyplot(fig)
     else:
-        if st.session_state.model is None:
+        if st.session_state.slr_model is None and st.session_state.mlr_model is None:
             st.info("Click **🚀 Train Model** in the sidebar to get started.")
 
-# ==================== TAB 3: PREDICTION ====================
+
 with tab3:
     st.header("🔮 Predict CO2 Emissions for a New Vehicle")
     st.info("Make sure you have trained a model first in the 'Training & Evaluation' tab.")
@@ -159,8 +168,9 @@ with tab3:
         submit = st.form_submit_button("🔍 Predict")
 
         if submit:
-            if st.session_state.model is None:
-                st.warning("⚠️ Please train a model first!")
+            active_model = st.session_state.slr_model if model_type.startswith("Simple") else st.session_state.mlr_model
+            if active_model is None:
+                   st.warning("⚠️ Please train the selected model first!")
             else:
                 if model_type.startswith("Simple"):
                     input_data = pd.DataFrame([[engine_size]], columns=['Engine_Size_L'])
@@ -168,7 +178,7 @@ with tab3:
                     input_data = pd.DataFrame([[engine_size, cylinders, combined_mpg]],
                                               columns=['Engine_Size_L', 'Engine_Cylinders', 'Combined_MPG'])
 
-                pred = st.session_state.model.predict(input_data)[0]
+                pred = active_model.predict(input_data)[0]
                 st.success(f"🔮 Predicted CO2 Emission: **{pred:.2f} g/mile**")
 
                 # Log to prediction history
@@ -180,42 +190,75 @@ with tab3:
                     "Combined MPG": combined_mpg if not model_type.startswith("Simple") else "N/A",
                     "Predicted CO2 (g/mile)": round(pred, 2),
                 }
-                st.session_state.prediction_history.append(entry)
+                if model_type.startswith("Simple"):
+                    st.session_state.slr_prediction_history.append(entry)
+                else:
+                    st.session_state.mlr_prediction_history.append(entry)
 
-# ==================== TAB 4: HISTORY ====================
+
 with tab4:
     st.header("🕓 Calculation History")
-
-    st.subheader("🔮 Prediction History")
-    if st.session_state.prediction_history:
-        pred_df = pd.DataFrame(st.session_state.prediction_history)
-        st.dataframe(pred_df, use_container_width=True)
-
-        col_dl, col_clr = st.columns([1, 1])
-        with col_dl:
-            csv = pred_df.to_csv(index=False).encode('utf-8')
-            st.download_button("⬇️ Download Prediction History (CSV)", csv, "prediction_history.csv", "text/csv")
-        with col_clr:
-            if st.button("🗑️ Clear Prediction History"):
-                st.session_state.prediction_history = []
+ 
+   
+    st.subheader("📈 Simple Linear Regression (SLR)")
+ 
+    col_a, col_b = st.columns(2)
+ 
+    with col_a:
+        st.markdown("**🤖 SLR Training History**")
+        if st.session_state.slr_training_history:
+            slr_train_df = pd.DataFrame(st.session_state.slr_training_history)
+            st.dataframe(slr_train_df, use_container_width=True)
+            csv = slr_train_df.to_csv(index=False).encode('utf-8')
+            st.download_button("⬇️ Download SLR Training (CSV)", csv, "slr_training_history.csv", "text/csv")
+            if st.button("🗑️ Clear SLR Training History"):
+                st.session_state.slr_training_history = []
                 st.rerun()
-    else:
-        st.info("No predictions made yet. Go to the **Predict New Values** tab to get started.")
-
+        else:
+            st.info("No SLR training runs yet.")
+ 
+    with col_b:
+        st.markdown("**🔮 SLR Prediction History**")
+        if st.session_state.slr_prediction_history:
+            slr_pred_df = pd.DataFrame(st.session_state.slr_prediction_history)
+            st.dataframe(slr_pred_df, use_container_width=True)
+            csv = slr_pred_df.to_csv(index=False).encode('utf-8')
+            st.download_button("⬇️ Download SLR Predictions (CSV)", csv, "slr_prediction_history.csv", "text/csv")
+            if st.button("🗑️ Clear SLR Prediction History"):
+                st.session_state.slr_prediction_history = []
+                st.rerun()
+        else:
+            st.info("No SLR predictions yet.")
+ 
     st.markdown("---")
-
-    st.subheader("🤖 Training History")
-    if st.session_state.training_history:
-        train_df = pd.DataFrame(st.session_state.training_history)
-        st.dataframe(train_df, use_container_width=True)
-
-        col_dl2, col_clr2 = st.columns([1, 1])
-        with col_dl2:
-            csv2 = train_df.to_csv(index=False).encode('utf-8')
-            st.download_button("⬇️ Download Training History (CSV)", csv2, "training_history.csv", "text/csv")
-        with col_clr2:
-            if st.button("🗑️ Clear Training History"):
-                st.session_state.training_history = []
+ 
+    # ---- MLR SECTION ----
+    st.subheader("📊 Multiple Linear Regression (MLR)")
+ 
+    col_c, col_d = st.columns(2)
+ 
+    with col_c:
+        st.markdown("**🤖 MLR Training History**")
+        if st.session_state.mlr_training_history:
+            mlr_train_df = pd.DataFrame(st.session_state.mlr_training_history)
+            st.dataframe(mlr_train_df, use_container_width=True)
+            csv = mlr_train_df.to_csv(index=False).encode('utf-8')
+            st.download_button("⬇️ Download MLR Training (CSV)", csv, "mlr_training_history.csv", "text/csv")
+            if st.button("🗑️ Clear MLR Training History"):
+                st.session_state.mlr_training_history = []
                 st.rerun()
-    else:
-        st.info("No training runs yet. Train a model first in the **Training & Evaluation** tab.")
+        else:
+            st.info("No MLR training runs yet.")
+ 
+    with col_d:
+        st.markdown("**🔮 MLR Prediction History**")
+        if st.session_state.mlr_prediction_history:
+            mlr_pred_df = pd.DataFrame(st.session_state.mlr_prediction_history)
+            st.dataframe(mlr_pred_df, use_container_width=True)
+            csv = mlr_pred_df.to_csv(index=False).encode('utf-8')
+            st.download_button("⬇️ Download MLR Predictions (CSV)", csv, "mlr_prediction_history.csv", "text/csv")
+            if st.button("🗑️ Clear MLR Prediction History"):
+                st.session_state.mlr_prediction_history = []
+                st.rerun()
+        else:
+            st.info("No MLR predictions yet.")
